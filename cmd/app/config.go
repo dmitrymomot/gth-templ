@@ -85,4 +85,10 @@ var (
 	googleOauth2ClientSecret = env.MustString("GOOGLE_OAUTH2_CLIENT_SECRET")
 	googleOauth2CallbackURL  = env.MustString("GOOGLE_OAUTH2_CALLBACK_URL")
 	googleOauth2Scopes       = env.GetStrings("GOOGLE_OAUTH2_SCOPES", ",", []string{"https://www.googleapis.com/auth/userinfo.email", "openid"})
+
+	// Verification
+	tokenSingingKey  = env.MustBytes("VERIFICATION_TOKEN_SIGNING_KEY")
+	resetPasswordTTL = env.GetDuration("RESET_PASSWORD_TTL", time.Minute*15)
+	confirmEmailTTL  = env.GetDuration("CONFIRM_EMAIL_TTL", time.Hour*24)
+	// deleteUserTTL    = env.GetDuration("DELETE_USER_TTL", time.Minute*15)
 )

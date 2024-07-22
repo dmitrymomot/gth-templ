@@ -14,7 +14,7 @@ import (
 type EmailService struct {
 	userSvc  userService
 	mailSvc  emailSender
-	tokenSvc tokenService
+	tokenSvc verificationService
 
 	resetPasswordTTL time.Duration
 	confirmEmailTTL  time.Duration
@@ -37,8 +37,8 @@ type emailSender interface {
 	SendVerificationEmail(ctx context.Context, userID, email, token string) error
 }
 
-// tokenService is an interface for token operations.
-type tokenService interface {
+// verificationService is an interface for token operations.
+type verificationService interface {
 	Generate(payload dto.Verification, expiration time.Duration) (string, error)
 	Verify(token string) (dto.Verification, error)
 }
@@ -48,7 +48,7 @@ type tokenService interface {
 func NewEmailService(
 	userSvc userService,
 	mailSvc emailSender,
-	tokenSvc tokenService,
+	verificationSvc verificationService,
 	resetPasswordTTL time.Duration,
 	confirmEmailTTL time.Duration,
 ) *EmailService {
@@ -61,7 +61,7 @@ func NewEmailService(
 	return &EmailService{
 		userSvc:          userSvc,
 		mailSvc:          mailSvc,
-		tokenSvc:         tokenSvc,
+		tokenSvc:         verificationSvc,
 		resetPasswordTTL: resetPasswordTTL,
 		confirmEmailTTL:  confirmEmailTTL,
 	}

@@ -1,0 +1,28 @@
+package profile
+
+import "github.com/dmitrymomot/go-app-template/web/templates/views"
+
+type User struct {
+	ID     string
+	Email  string
+	Name   string
+	Avatar string
+}
+
+templ ProfilePage(user User) {
+	@views.Layout(views.Head{
+		Title:       "Profile",
+		Description: "Profile page",
+	}) {
+		<div class="text-white p-10">
+			<h1>Profile</h1>
+			<p>ID: { user.ID }</p>
+			<p>Email: { user.Email }</p>
+			<p>Name: { user.Name }</p>
+			<p>Avatar: { user.Avatar }</p>
+			<form method="post" action="/auth/logout">
+				<button type="submit" class="rounded-md bg-indigo-500 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500">Logout</button>
+			</form>
+		</div>
+	}
+}

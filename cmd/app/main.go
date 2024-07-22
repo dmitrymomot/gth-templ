@@ -12,7 +12,10 @@ import (
 	"github.com/dmitrymomot/go-app-template/cmd/app/handlers"
 	libsql_remote "github.com/dmitrymomot/go-app-template/db/libsql/remote"
 	"github.com/dmitrymomot/go-app-template/db/repository"
-	"github.com/dmitrymomot/go-app-template/internal/auth"
+	"github.com/dmitrymomot/go-app-template/internal/services/auth"
+	"github.com/dmitrymomot/go-app-template/internal/services/mail"
+	"github.com/dmitrymomot/go-app-template/internal/services/user"
+	"github.com/dmitrymomot/go-app-template/internal/services/verification"
 	"github.com/dmitrymomot/httpserver"
 	"github.com/dmitrymomot/mailer"
 	"github.com/dmitrymomot/mailer/adapters/postmark"
@@ -72,7 +75,6 @@ func main() {
 
 	// Create a new mail enqueuer.
 	mailEnqueuer := mailer.NewEnqueuer(enqueuer)
-	_ = mailEnqueuer // TODO: remove this line and use the mailEnqueuer to send emails via the queue.
 
 	// Init DB repository
 	repo := repository.New(db)
@@ -81,20 +83,47 @@ func main() {
 	sessionManager := initSessionManager(redisClient)
 
 	// Init router
-	r := initRouter(logger, redisClient, sessionManager)
+	r := initRouter(
+		logger.With("component", "router"),
+		redisClient,
+		sessionManager,
+	)
 
 	// Home page
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/auth/login", http.StatusTemporaryRedirect)
+		if _, err := w.Write([]byte("Hello, World!")); err != nil {
+			logger.Errorw("Failed to write response", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	})
 
+	// Init services
+	var (
+		userSvc         = user.NewService(repo)
+		verificationSvc = verification.NewTokenVerificationService(tokenSingingKey)
+		mailSvc         = mail.NewService(mailEnqueuer)
+		authSvc         = auth.NewEmailService(
+			userSvc, mailSvc, verificationSvc,
+			resetPasswordTTL, confirmEmailTTL,
+		)
+		googleAuthSvc = auth.NewGoogleService(repo, userSvc, googleOauth2ClientID)
+	)
+
 	// Mount the auth service handler to the router.
-	r.Mount("/auth", handlers.NewHTTPHandler(
+	r.Mount("/auth", handlers.NewAuthHTTPHandler(
 		logger.With("component", "auth"),
 		initGoogleOauth2Config(),
-		auth.NewEmailService(repo),
-		auth.NewGoogleService(repo),
+		authSvc,
+		googleAuthSvc,
 		sessionManager,
+	))
+
+	// Mount the profile service handler to the router.
+	r.Mount("/profile", handlers.NewProfileHTTPHandler(
+		logger.With("component", "profile"),
+		sessionManager,
+		userSvc,
 	))
 
 	eg, ctx := errgroup.WithContext(ctx)

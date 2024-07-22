@@ -3,6 +3,9 @@ package main
 import (
 	"encoding/gob"
 	"net/url"
+
+	"github.com/dmitrymomot/go-app-template/internal/dto"
+	"github.com/google/uuid"
 )
 
 // init is a special function in Go that is automatically called before the main function.
@@ -16,6 +19,8 @@ func init() {
 	gob.Register(map[string]interface{}{})
 	gob.Register(map[string][]interface{}{})
 	gob.Register(map[interface{}]interface{}{})
+	gob.Register(dto.User{})
+	gob.Register(uuid.UUID{})
 
 	// ... (other init code)
 }

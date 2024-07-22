@@ -1,0 +1,84 @@
+package emails
+
+import "github.com/dmitrymomot/mailer/template/components"
+import "github.com/dmitrymomot/mailer/template/utils"
+import "time"
+import "fmt"
+
+type WelcomeEmailPayload struct {
+	Lang         string
+	Subject      string
+	EmailPreview string
+	LogoURL      string
+	CompanyName  string
+	CompanyURL   string
+	Greeting     string
+	SupportEmail string
+	SupportURL   string
+	ButtonText   string
+	ButtonURL    string
+	ExpiresIn    string
+	Footer       string
+}
+
+func (p WelcomeEmailPayload) GetSupportMailToLink() templ.SafeURL {
+	return templ.SafeURL("mailto:" + p.SupportEmail)
+}
+
+templ WelcomeEmail(payload WelcomeEmailPayload) {
+	@components.Layout(payload.Lang, payload.Subject, payload.EmailPreview) {
+		@components.Wrapper() {
+			@components.Spacer()
+			@components.LogoImage(payload.LogoURL, payload.CompanyName, payload.CompanyURL, "200px")
+			@components.Spacer()
+		}
+		@components.Wrapper() {
+			@components.Container(utils.BgWhite) {
+				@components.Row() {
+					@components.ColFull(utils.AlignLeft) {
+						@components.H2(payload.Greeting)
+						@components.P() {
+							Thank you for taking the next step with us! We're just one click away from getting everything set up for you. Please confirm your email address by clicking the button below:
+						}
+					}
+				}
+				@components.Row() {
+					@components.ColFull(utils.AlignCenter) {
+						@components.ButtonFilled(utils.AlignCenter, utils.Primary, payload.ButtonText, payload.ButtonURL)
+					}
+				}
+				@components.Row() {
+					@components.ColFull(utils.AlignLeft) {
+						if payload.ExpiresIn != "" {
+							@components.P() {
+								<b>Please note:</b> The confirmation link is valid for { payload.ExpiresIn }. After this period, it will expire, and you will need to request a new confirmation if you haven't completed the process.
+							}
+						}
+						if payload.SupportEmail != "" && payload.SupportURL != "" {
+							@components.P() {
+								If you have any questions, please don't hesitate to contact us at <a href={ payload.GetSupportMailToLink() }>{ payload.SupportEmail }</a> or visit our <a href={ templ.URL(payload.SupportURL) }>support page</a>.
+							}
+						}
+					}
+				}
+			}
+		}
+		@components.Wrapper() {
+			@components.Container(utils.Transparent) {
+				@components.Row() {
+					@components.ColFull(utils.AlignCenter) {
+						@components.SecondaryText() {
+							if payload.Footer != "" {
+								@templ.Raw(payload.Footer)
+							} else {
+								{ fmt.Sprintf("%d ", time.Now().Year()) }
+								@components.Link(payload.CompanyName, payload.CompanyURL)
+								All rights reserved.
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

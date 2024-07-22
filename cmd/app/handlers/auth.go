@@ -2,16 +2,13 @@ package handlers
 
 import (
 	"errors"
-	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"time"
 
 	"github.com/a-h/templ"
 	"github.com/alexedwards/scs/v2"
 	"github.com/dmitrymomot/binder"
-	authsvc "github.com/dmitrymomot/go-app-template/internal/auth"
+	authsvc "github.com/dmitrymomot/go-app-template/internal/services/auth"
 	"github.com/dmitrymomot/go-app-template/pkg/validator"
 	"github.com/dmitrymomot/go-app-template/web/templates/views/auth"
 	"github.com/dmitrymomot/random"
@@ -20,10 +17,10 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// NewHTTPHandler creates a new HTTP handler for the auth service.
+// NewAuthHTTPHandler creates a new HTTP handler for the auth service.
 // It takes a pointer to a Service struct as a parameter and returns an http.Handler.
 // The returned handler is responsible for handling HTTP requests related to the auth service.
-func NewHTTPHandler(
+func NewAuthHTTPHandler(
 	log *zap.SugaredLogger,
 	gAuth *oauth2.Config,
 	es *authsvc.EmailService,
@@ -32,20 +29,34 @@ func NewHTTPHandler(
 ) http.Handler {
 	r := chi.NewRouter()
 
-	r.Get("/signup", templ.Handler(auth.SignupPage()).ServeHTTP)
-	r.Get("/login", templ.Handler(auth.LoginPage()).ServeHTTP)
-	r.Get("/forgot-password", templ.Handler(auth.ForgotPasswordPage()).ServeHTTP)
-	r.Get("/reset-password", templ.Handler(auth.ResetPasswordPage()).ServeHTTP)
-	r.Get("/confirm-email", templ.Handler(auth.ResetPasswordPage()).ServeHTTP)
+	r.Group(func(r chi.Router) {
+		// Auth middleware
+		r.Use(AuthMiddleware(sm, log, false))
 
-	r.Post("/signup", signupHandler(es, log))
-	r.Post("/login", loginHandler(es, log))
-	r.Post("/forgot-password", forgotPasswordHandler(es, log))
-	r.Post("/reset-password", resetPasswordHandler(es, log))
+		r.Get("/signup", templ.Handler(auth.SignupPage()).ServeHTTP)
+		r.Get("/login", templ.Handler(auth.LoginPage()).ServeHTTP)
+		r.Get("/forgot-password", templ.Handler(auth.ForgotPasswordPage()).ServeHTTP)
+		r.Get("/reset-password", templ.Handler(auth.ResetPasswordPage()).ServeHTTP)
 
-	// Google OAuth2
-	r.Get("/login/google", googleLoginHandler(gAuth, sm))
-	r.Get("/login/google/callback", googleLoginCallbackHandler(gAuth, gs, sm, log))
+		r.Post("/signup", signupHandler(es, log))
+		r.Post("/login", loginHandler(es, log))
+		r.Post("/forgot-password", forgotPasswordHandler(es, log))
+		r.Post("/reset-password", resetPasswordHandler(es, log))
+
+		// Google OAuth2
+		r.Get("/login/google", googleLoginHandler(gAuth, sm))
+		r.Get("/login/google/callback", googleLoginCallbackHandler(gAuth, gs, sm, log))
+	})
+
+	// Confirm email endpoint must be accessible without authentication
+	// to allow users to confirm their email address after signing up.
+	r.Get("/confirm-email", confirmEmailHandler(es, log))
+
+	r.Group(func(r chi.Router) {
+		// Auth middleware
+		r.Use(AuthMiddleware(sm, log, true))
+		r.Post("/logout", logoutHandler(sm))
+	})
 
 	return r
 }
@@ -71,9 +82,8 @@ func signupHandler(_ *authsvc.EmailService, log *zap.SugaredLogger) http.Handler
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Parse the form.
 		req := &requestPayload{}
-		if err := binder.BindForm(r, req); err == nil {
-			// http.Error(w, err.Error(), http.StatusInternalServerError)
-			sendErrorResponse(w, r, http.StatusInternalServerError, errors.New("test error")) // TODO: Fix this
+		if err := binder.BindForm(r, req); err != nil {
+			sendErrorResponseWithCode(w, r, http.StatusInternalServerError, errors.Join(ErrBindForm, err))
 			return
 		}
 
@@ -110,7 +120,7 @@ func loginHandler(_ *authsvc.EmailService, log *zap.SugaredLogger) http.HandlerF
 		// Parse the form.
 		req := &requestPayload{}
 		if err := binder.BindForm(r, req); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			sendErrorResponseWithCode(w, r, http.StatusInternalServerError, errors.Join(ErrBindForm, err))
 			return
 		}
 
@@ -129,6 +139,18 @@ func loginHandler(_ *authsvc.EmailService, log *zap.SugaredLogger) http.HandlerF
 	}
 }
 
+// logoutHandler is an HTTP handler for the logout endpoint.
+// It takes a pointer to a Service struct as a parameter and returns an http.HandlerFunc.
+// The returned handler is responsible for handling HTTP requests to the logout endpoint.
+func logoutHandler(sm *scs.SessionManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Remove the user ID from the session.
+		sm.Remove(r.Context(), userIDSessionKey)
+		// Redirect to the home page.
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	}
+}
+
 // forgotPasswordHandler is an HTTP handler for the forgot-password endpoint.
 // It takes a pointer to a Service struct as a parameter and returns an http.HandlerFunc.
 // The returned handler is responsible for handling HTTP requests to the forgot-password endpoint.
@@ -138,11 +160,10 @@ func forgotPasswordHandler(_ *authsvc.EmailService, log *zap.SugaredLogger) http
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(1 * time.Second)
 		// Parse the form.
 		req := &requestPayload{}
 		if err := binder.BindForm(r, req); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			sendErrorResponseWithCode(w, r, http.StatusInternalServerError, errors.Join(ErrBindForm, err))
 			return
 		}
 
@@ -181,7 +202,7 @@ func resetPasswordHandler(_ *authsvc.EmailService, log *zap.SugaredLogger) http.
 		// Parse the form.
 		req := &requestPayload{}
 		if err := binder.BindForm(r, req); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			sendErrorResponseWithCode(w, r, http.StatusInternalServerError, errors.Join(ErrBindForm, err))
 			return
 		}
 
@@ -203,8 +224,24 @@ func resetPasswordHandler(_ *authsvc.EmailService, log *zap.SugaredLogger) http.
 	}
 }
 
-// googleAuthStateKey is the key used to store the Google OAuth2 auth state in the session.
-const googleAuthStateKey = "google_auth_state"
+// confirmEmailHandler is an HTTP handler for the confirm-email endpoint.
+// It takes a pointer to a Service struct as a parameter and returns an http.HandlerFunc.
+// The returned handler is responsible for handling HTTP requests to the confirm-email endpoint.
+func confirmEmailHandler(es *authsvc.EmailService, log *zap.SugaredLogger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := r.URL.Query().Get("token")
+		if token == "" {
+			sendErrorResponseWithCode(w, r, http.StatusBadRequest, ErrMissingEmailConfirmationToken)
+			return
+		}
+
+		if _, err := es.VerifyEmail(r.Context(), token); err != nil {
+			log.Errorw("Failed to verify email", "error", err)
+			sendErrorResponse(w, r, err)
+			return
+		}
+	}
+}
 
 // googleLoginHandler is an HTTP handler for the login/google endpoint.
 // It takes a pointer to a oauth2.Config struct as a parameter and returns an http.HandlerFunc.
@@ -222,27 +259,26 @@ func googleLoginHandler(c *oauth2.Config, sm *scs.SessionManager) http.HandlerFu
 // googleLoginCallbackHandler is an HTTP handler for the login/google/callback endpoint.
 // It takes a pointer to a oauth2.Config struct and a pointer to a Service struct as parameters and returns an http.HandlerFunc.
 // The returned handler is responsible for handling HTTP requests to the login/google/callback endpoint.
-func googleLoginCallbackHandler(c *oauth2.Config, _ *authsvc.GoogleService, sm *scs.SessionManager, log *zap.SugaredLogger) http.HandlerFunc {
+func googleLoginCallbackHandler(c *oauth2.Config, gAuth *authsvc.GoogleService, sm *scs.SessionManager, log *zap.SugaredLogger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Parse the form.
 		code := r.URL.Query().Get("code")
 		if code == "" {
-			sendErrorResponse(w, r, http.StatusBadRequest, errors.New("Missing auth code"))
+			sendErrorResponseWithCode(w, r, http.StatusBadRequest, ErrMissingAuthCode)
 			return
 		}
 
 		// Check the state.
 		state := r.URL.Query().Get("state")
 		if state == "" {
-			sendErrorResponse(w, r, http.StatusBadRequest, errors.New("Missing auth state"))
+			sendErrorResponseWithCode(w, r, http.StatusBadRequest, ErrMissingAuthState)
 			return
 		}
 
 		// Get the auth code from the session.
 		authState := sm.GetString(r.Context(), googleAuthStateKey)
 		if authState != state {
-			log.Errorw("Invalid auth state", "error", "Invalid auth state", "state", state, "authState", authState)
-			sendErrorResponse(w, r, http.StatusBadRequest, errors.New("Invalid auth state"))
+			sendErrorResponseWithCode(w, r, http.StatusBadRequest, ErrInvalidAuthState)
 			return
 		}
 
@@ -252,29 +288,30 @@ func googleLoginCallbackHandler(c *oauth2.Config, _ *authsvc.GoogleService, sm *
 		// Exchange the code for a token.
 		token, err := c.Exchange(r.Context(), code)
 		if err != nil {
-			log.Errorw("Failed to exchange code for token", "error", err)
-			http.Error(w, "Failed to exchange code for token", http.StatusInternalServerError)
+			log.Errorw("Failed to exchange code", "error", err)
+			sendErrorResponseWithCode(w, r, http.StatusInternalServerError, errors.Join(ErrFailedToExchangeCode, err))
 			return
 		}
 
-		// Get the user's profile.
-		response, err := http.Get("https://www.googleapis.com/oauth2/v2/userinfo?access_token=" + token.AccessToken)
+		// Authenticate the user.
+		u, err := gAuth.Auth(r.Context(), token.AccessToken)
 		if err != nil {
-			log.Errorw("Failed to get user info", "error", err)
-			http.Error(w, "Failed to get user info", http.StatusInternalServerError)
-			return
-		}
-		defer response.Body.Close()
-
-		// Read the response body.
-		content, err := io.ReadAll(response.Body)
-		if err != nil {
-			log.Errorw("Failed to read response body", "error", err)
-			http.Error(w, "Failed to read response body", http.StatusInternalServerError)
+			log.Errorw("Failed to authenticate user", "error", err)
+			sendErrorResponseWithCode(w, r, http.StatusInternalServerError, errors.Join(ErrFailedToAuthenticate, err))
 			return
 		}
 
-		fmt.Fprintf(w, "Response: %s", content)
-		log.Infow("Google OAuth2 callback", "response", string(content))
+		// Renew the session token.
+		if err := sm.RenewToken(r.Context()); err != nil {
+			log.Errorw("Failed to renew session token", "error", err)
+			sendErrorResponseWithCode(w, r, http.StatusInternalServerError, errors.Join(ErrFailedToAuthenticate, err))
+			return
+		}
+
+		// Set the user ID in the session.
+		sm.Put(r.Context(), userIDSessionKey, u.ID)
+
+		// Redirect to the home page.
+		http.Redirect(w, r, authenticatedURL, http.StatusSeeOther)
 	}
 }
